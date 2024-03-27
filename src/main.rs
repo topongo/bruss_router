@@ -28,17 +28,30 @@ fn url_builder(start: &Coords, end: &Coords) -> String {
 }
 
 
-async fn calculate_geometry(s1: &Stop, s2: &Stop, client: Option<Client>) -> Result<Vec<Coords>, reqwest::Error> {
+async fn calculate_geometry(s1: Stop, s2: Stop, client: Option<Client>) -> Result<Vec<Coords>, reqwest::Error> {
     let client = client.unwrap_or(Client::new());
-    client.get(url_builder(&s1.position, &s2.position))
+    let res = client.get(url_builder(&s1.position, &s2.position))
         .send()
         .await?
         .json::<OsrmResponse>()
+        // .text()
         .await?;
 
-    todo!();
+    Ok(res.flatten())
+    // println!("{}", res);
+    // todo!();
 }
 
+fn vec_to_geojson(input: &Vec<Coords>) -> String {
+    serde_json::to_string(
+        &input.iter()
+            .map(|c| {
+                (c.lng, c.lat)
+            })
+            .collect::<Vec<(f64, f64)>>()
+        )
+        .unwrap()
+}
 
 #[tokio::main]
 async fn main() {
@@ -56,8 +69,9 @@ async fn main() {
     }
 
     let mut segments = HashMap::<(u16, u16), Vec<Coords>>::new();
-    let mut segments_fut_keys = HashSet::<(u16, u16)>::new();
-    let mut segments_fut = Vec::new();
+    // let mut segments_fut_keys = HashSet::<(u16, u16)>::new();
+    // let mut segments_fut = Vec::new();
+    let mut segments_fut = HashMap::<(u16, u16), _>::new();
     for t in trips {
         if t.stop_times.len() > 0 {
             // TODO: use this to assert the fact that stops are in order.
@@ -68,14 +82,15 @@ async fn main() {
                 #[cfg(debug_assertions)]
                 if segments.contains_key(&key) {
                     // check if data in database is correct
-                    let geom = calculate_geometry(stops.get(&prev.stop).unwrap(), stops.get(&st.stop).unwrap(), None).await.unwrap();
-                    assert!(geom.iter()
-                        .eq(segments.get(&key).unwrap().iter()));
+                    // let geom = calculate_geometry(stops.get(&prev.stop).unwrap(), stops.get(&st.stop).unwrap(), None).await.unwrap();
+                    // assert!(geom.iter()
+                        // .eq(segments.get(&key).unwrap().iter()));
                 }
-                if !segments_fut_keys.contains(&key) {
+                if !segments_fut.contains_key(&key) {
                     let prev_stop = stops.get(&prev.stop).unwrap().clone();
                     let stop = stops.get(&st.stop).unwrap().clone();
-                    segments_fut.push(
+                    segments_fut.insert(
+                        key,
                         calculate_geometry(prev_stop, stop, None)
                     );
                 } else {
@@ -85,19 +100,22 @@ async fn main() {
         }
     }
 
-    let mut handles = Vec::with_capacity(segments_fut.len());
+    let mut handles = HashMap::with_capacity(segments_fut.len());
 
-    for fut in segments_fut {
-        handles.push(tokio::spawn(fut));
+    for (k, fut) in segments_fut {
+        handles.insert(k, tokio::spawn(fut));
     }
 
-    let mut results = Vec::with_capacity(handles.len());
-    for handle in handles {
-        results.push(handle.await.unwrap());
-    }    
+    for (k, handle) in handles {
+        segments.insert(k, handle.await.unwrap().unwrap());
+    }
     // let res = futures::future::join_all(segments_fut.values());
 
-    // println!("{}", res);
+    for (k, seg) in segments {
+        let s1 = stops.get(&k.0).unwrap();
+        let s2 = stops.get(&k.1).unwrap();
+        println!("{} -> {}:\n{}\n\n", s1.name, s2.name, vec_to_geojson(&seg));
+    }
     // println!("{:?}", res.flatten());
 
     // print!("https://map.project-osrm.org/?z=17&center=46.070927%2C11.127037");

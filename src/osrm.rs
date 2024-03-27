@@ -46,7 +46,7 @@ impl OsrmResponse {
         for r in self.routes {
             assert!(r.legs.len() == 1);
             for l in r.legs {
-                assert!(l.steps.len() == 1);
+                // assert!(l.steps.len() == 1);
                 for s in l.steps {
                     o.append(&mut s.get_coords());
                 }
