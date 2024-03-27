@@ -1,0 +1,16 @@
+[package]
+name = "bruss_router"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tt = { path = "../tt" }
+bruss_config = { path = "../config" }
+bruss_data = { path = "../data" }
+lazy_static = "1.4"
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.35", features = ["full"] }
+chrono = { version = "0.4" }
+geojson = "0.24"
+serde = "1"
+polyline = "0.10"
