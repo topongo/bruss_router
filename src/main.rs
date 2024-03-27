@@ -2,7 +2,7 @@
 
 mod osrm;
 
-use std::collections::HashMap;
+use std::{collections::{HashMap, HashSet}, future::Future, sync::Arc};
 use osrm::OsrmResponse;
 
 use reqwest::{Client, RequestBuilder};
@@ -16,7 +16,7 @@ lazy_static! {
     pub static ref CONFIGS: BrussConfig = BrussConfig::from_file("../bruss.toml").expect("cannot load configs");
 }
 
-fn url_builder(start: Coords, end: Coords) -> String {
+fn url_builder(start: &Coords, end: &Coords) -> String {
     format!(
         "http://{}:{}/{}/{};{}?geometries=polyline&overview=false&steps=true&alternatives=false",
         CONFIGS.routing.host,
@@ -28,10 +28,9 @@ fn url_builder(start: Coords, end: Coords) -> String {
 }
 
 
-async fn calculate_geometry(s1: Stop, s2: Stop, client: Option<Client>) -> Result<((u16, u16), Vec<Coords>), reqwest::Error> {
-    let prev: &StopTime;
+async fn calculate_geometry(s1: &Stop, s2: &Stop, client: Option<Client>) -> Result<Vec<Coords>, reqwest::Error> {
     let client = client.unwrap_or(Client::new());
-    client.get(url_builder(s1.position, s2.position))
+    client.get(url_builder(&s1.position, &s2.position))
         .send()
         .await?
         .json::<OsrmResponse>()
@@ -56,8 +55,50 @@ async fn main() {
         stops.insert(s.id, Stop::from_tt(s));
     }
 
+    let mut segments = HashMap::<(u16, u16), Vec<Coords>>::new();
+    let mut segments_fut_keys = HashSet::<(u16, u16)>::new();
+    let mut segments_fut = Vec::new();
+    for t in trips {
+        if t.stop_times.len() > 0 {
+            // TODO: use this to assert the fact that stops are in order.
+            let prev_n = -1;
+            let mut prev = &t.stop_times[0];
+            for st in t.stop_times.iter().skip(1) {
+                let key = (prev.stop, st.stop);
+                #[cfg(debug_assertions)]
+                if segments.contains_key(&key) {
+                    // check if data in database is correct
+                    let geom = calculate_geometry(stops.get(&prev.stop).unwrap(), stops.get(&st.stop).unwrap(), None).await.unwrap();
+                    assert!(geom.iter()
+                        .eq(segments.get(&key).unwrap().iter()));
+                }
+                if !segments_fut_keys.contains(&key) {
+                    let prev_stop = stops.get(&prev.stop).unwrap().clone();
+                    let stop = stops.get(&st.stop).unwrap().clone();
+                    segments_fut.push(
+                        calculate_geometry(prev_stop, stop, None)
+                    );
+                } else {
+                }
+                prev = st;
+            }
+        }
+    }
+
+    let mut handles = Vec::with_capacity(segments_fut.len());
+
+    for fut in segments_fut {
+        handles.push(tokio::spawn(fut));
+    }
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        results.push(handle.await.unwrap());
+    }    
+    // let res = futures::future::join_all(segments_fut.values());
+
     // println!("{}", res);
-    println!("{:?}", res.flatten());
+    // println!("{:?}", res.flatten());
 
     // print!("https://map.project-osrm.org/?z=17&center=46.070927%2C11.127037");
     // for t in &trips[0].stop_times {

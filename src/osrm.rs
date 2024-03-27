@@ -1,9 +1,6 @@
-use std::collections::HashMap;
-
 use bruss_data::Coords;
 use polyline::decode_polyline;
 use serde::{Deserialize,Serialize};
-use tt::TTStop;
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct OsrmResponse {
@@ -45,12 +42,13 @@ impl Step {
 impl OsrmResponse {
     pub fn flatten(self) -> Vec<Coords> {
         let mut o = Vec::new();
-        assert_eq!(self.routes.len(), 1);
+        assert!(self.routes.len() == 1);
         for r in self.routes {
-            assert_eq!(r.legs.len(), 1);
+            assert!(r.legs.len() == 1);
             for l in r.legs {
-                for s in l.steps { 
-                    o.insert(&mut s.get_coords());
+                assert!(l.steps.len() == 1);
+                for s in l.steps {
+                    o.append(&mut s.get_coords());
                 }
             }
         }
