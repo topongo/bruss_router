@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 tt = { path = "../tt" }
 bruss_config = { path = "../config" }
-bruss_data = { path = "../data" }
+bruss_data = { path = "../data", features = ["db"] }
 lazy_static = "1.4"
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1.35", features = ["full"] }
@@ -17,3 +17,8 @@ polyline = "0.10"
 assert_matches = "1.5"
 futures = "0.3"
 serde_json = "^1"
+mongodb = "^2.8"
+uuid = { version = "^1.8", features = ["fast-rng", "v4", "serde"] }
+log = "0.4.21"
+env_logger = "0.11.3"
+md5 = "0.7.0"
