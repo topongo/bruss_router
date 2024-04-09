@@ -3,7 +3,7 @@ use polyline::decode_polyline;
 use serde::{Deserialize,Serialize};
 
 #[derive(Deserialize, Debug)]
-pub(crate) struct OsrmResponse {
+pub struct OsrmResponse {
     routes: Vec<Route>
 }
 
