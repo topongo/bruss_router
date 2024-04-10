@@ -5,7 +5,7 @@ use tt::AreaType;
 use crate::CONFIGS;
 
 #[derive(Deserialize, Debug)]
-pub(crate) struct OsrmResponse {
+pub struct OsrmResponse {
     routes: Vec<Route>
 }
 

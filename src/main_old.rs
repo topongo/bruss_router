@@ -7,18 +7,14 @@ use futures::{StreamExt, TryStreamExt};
 use osrm::OsrmResponse;
 
 use reqwest::RequestBuilder;
-use mongodb::bson::doc;
+use mongodb::bson::{bson, doc, Bson};
 use mongodb::options::FindOptions;
-use tt::{RequestOptions, StopTime, TTStop, TTTrip, TripQuery, AreaType};
+use tt::{AreaType, RequestOptions, StopTime, TTRoute, TTStop, TTTrip, TripQuery};
 use chrono::{Local, Duration};
 use bruss_config::BrussConfig;
 use lazy_static::lazy_static;
 use bruss_data::{FromTT, Stop, Coords, Segment, Path, Trip, BrussType, AreaHelper, StopPair, sequence_hash, Route};
 use log::{info,debug,warn};
-
-lazy_static! {
-    pub static ref CONFIGS: BrussConfig = BrussConfig::from_file("bruss.toml").expect("cannot load configs");
-}
 
 fn url_builder(start: &Coords, end: &Coords) -> String {
     format!(
@@ -60,8 +56,8 @@ fn path_to_geojson(input: &Path, segments: HashMap<(StopPair, AreaType), Segment
         .unwrap()
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
+// #[tokio::main]
+async fn main_old() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     env_logger::init(); 
 
     // create tt client
@@ -122,41 +118,64 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         .try_collect()
         .await?;
 
+    let routes_c = Route::get_coll(&db);
+    let routes = if routes_c.count_documents(doc!{}, None).await.unwrap() == 0 {
+        let routes_tt = tt_client.request::<TTRoute>().await.unwrap();
+        let mut routes_bruss = Vec::with_capacity(routes_tt.len());
+        for rt in routes_tt {
+            routes_bruss.push(Route::from_tt(rt));
+        }
+        routes_c.insert_many(&routes_bruss, None).await.expect("couln't insert routes into database");
+        routes_bruss
+    } else {
+        routes_c 
+            .find(doc!{}, None)
+            .await?
+            .try_collect()
+            .await?
+    };
 
-    let routes: Vec<Route> = Route::get_coll(&db)
-        .find(doc!{}, None)
-        .await?
-        .try_collect()
-        .await?;
+    let trips_c = db.collection::<Trip>("trips_temp");
 
-    info!("getting trips from tt...");
-    let time = (Local::now() + Duration::hours(5) + Duration::days(1)).naive_local();
-    debug!("using start time: {}", time);
-    let mut trips_tt: Vec<TTTrip> = Vec::new(); 
-    for r in routes {
-        info!("getting route {}", r.id);
-        let mut ts = tt_client
-            .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new().query(TripQuery { 
-                ty: AreaType::U,
-                // 5/: 535
-                // 3: 396
-                route_id: r.id,
-                limit: 100,
-                time 
-            })))
-            .await?;
-        info!("got {} trips for route {:?}", ts.len(), r.id);
-        trips_tt.append(&mut ts);
-    }
-    info!("done! got {} trips", trips_tt.len());
+    let trips = if trips_c.count_documents(doc!{}, None).await.unwrap() == 0 {
+        info!("getting trips from tt...");
+        let time = (Local::now() + Duration::hours(5) + Duration::days(1)).naive_local();
+        debug!("using start time: {}", time);
+        let mut trips_tt: Vec<TTTrip> = Vec::new(); 
+        for r in routes {
+            info!("getting route {}", r.id);
+            let mut ts = tt_client
+                .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new().query(TripQuery { 
+                    ty: AreaType::U,
+                    // 5/: 535
+                    // 3: 396
+                    route_id: r.id,
+                    limit: 100,
+                    time 
+                })))
+                .await?;
+            info!("got {} trips for route {:?}", ts.len(), r.id);
+            trips_tt.append(&mut ts);
+        }
 
-    info!("converting trips into bruss type...");
-    let mut trips = Vec::<Trip>::new();
-    for t in trips_tt {
-        trips.push(Trip::from_tt(t));
-    }
-    info!("done!");
-    
+        info!("done! got {} trips", trips_tt.len());
+
+        info!("converting trips into bruss type...");
+        let mut trips = Vec::<Trip>::new();
+        for t in trips_tt {
+            trips.push(Trip::from_tt(t));
+        }
+        info!("done! inserting them in database...");
+        trips_c.insert_many(&trips, None).await.expect("cannot insert trips in database");
+        trips
+    } else {
+        info!("trips are already in database! skipping tt request.");
+        trips_c.find(doc!{}, None).await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap()
+    };
 
     let mut segments_fut = HashMap::<(StopPair, AreaType), _>::new();
     let mut paths_pending = HashMap::<String, (AreaType, Vec<StopPair>)>::new();
@@ -166,10 +185,8 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             let stops_inarea = stops.get(t.ty);
             // info!("trip {} is not in database", t.id);
             // trip is not in database, processing it.
-            let p_hash = sequence_hash(t.ty, &t.path);
-            debug!("\tpath sequence: {:?}", t.path);
-            info!("path hash is: {}", p_hash);
-            if !paths_pending.contains_key(&p_hash) && !paths_in_db.contains(&p_hash) {
+            info!("trip's path hash is: {}", t.path);
+            if !paths_pending.contains_key(&t.path) && !paths_in_db.contains(&t.path) {
                 info!("path of trip {} is not in database, importing it...", t.id);
                 let mut path_sequence = vec![];
                 // let path_sequence = &mut paths_pending.get_mut(&p_hash).unwrap().1;
@@ -178,7 +195,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
                     panic!("path length is 0")
                 }
                 // let prev_n = -1;
-                let mut prev = &t.path[0];
+                let mut prev = &t.path;
                 for s in t.path.iter().skip(1) {
                     let key = (*prev, *s);
                     path_sequence.push(key);

@@ -58,6 +58,13 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         .map(|r| r.map(|d| d.id))
         .try_collect()
         .await?;
+
+    info!("getting path ids...");
+    let path_ids: HashSet<String> = db.collection::<String>("paths")
+        .find(doc!{}, FindOptions::builder().projection(doc!{"id": 1, "_id": 0}).build())
+        .await?
+        .try_collect()
+        .await?;
     info!("done! got {} paths", path_ids.len());
 
     info!("getting segment ids...");
