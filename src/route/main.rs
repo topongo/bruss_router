@@ -50,17 +50,14 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
     info!("getting stops from db...");
     let mut stops: AreaHelper<Stop> = AreaHelper::new();
-    let x = Stop::get_coll(&db)
-        .find(doc!{"id": 10}, None)
-        .await?
-        .try_collect::<Vec<Stop>>()
+    let mut cursor = Stop::get_coll(&db)
+        .find(doc!{}, None)
         .await?;
-
-    for s in x {
-        debug!("entered loop {:?}", s);
-        // stops.insert(s?);
+    while let Some(s) = cursor.try_next().await? {
+        stops.insert(s);
     }
-
+    info!("done! got {} stops from db", stops.len());
+   
     info!("checking for missing segments...");
     let mut missing_segments: HashSet<(AreaType, StopPair)> = HashSet::new();
     for p in paths.values() {

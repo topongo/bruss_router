@@ -3,10 +3,10 @@
 use std::collections::{HashMap, HashSet};
 use futures::{StreamExt, TryStreamExt};
 
-use mongodb::bson::{doc, Document};
+use mongodb::bson::doc;
 use mongodb::options::FindOptions;
 use tt::{AreaType, RequestOptions, TTRoute, TTTrip, TripQuery, TTStop};
-use chrono::{Local, Duration, NaiveTime};
+use chrono::{Local, NaiveTime};
 use bruss_data::{FromTT, Segment, Path, Trip, BrussType, sequence_hash, Route, Stop};
 use log::{info,debug,warn};
 use bruss_router::CONFIGS;
@@ -58,14 +58,6 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         .map(|r| r.map(|d| d.id))
         .try_collect()
         .await?;
-
-    info!("getting path ids...");
-    let path_ids: HashSet<String> = db.collection::<String>("paths")
-        .find(doc!{}, FindOptions::builder().projection(doc!{"id": 1, "_id": 0}).build())
-        .await?
-        .try_collect()
-        .await?;
-    info!("done! got {} paths", path_ids.len());
 
     info!("getting segment ids...");
     let segment_ids: HashSet<(AreaType, u16, u16)> = Segment::get_coll(&db)
