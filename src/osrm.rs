@@ -1,6 +1,8 @@
-use bruss_data::Coords;
+use bruss_data::{Stop,Coords, StopPair};
 use polyline::decode_polyline;
-use serde::{Deserialize,Serialize};
+use serde::Deserialize;
+use tt::AreaType;
+use crate::CONFIGS;
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct OsrmResponse {
@@ -54,6 +56,31 @@ impl OsrmResponse {
         }
         o
     }
+}
+
+pub fn url_builder(start: &Coords, end: &Coords) -> String {
+    format!(
+        "http://{}:{}/{}/{};{}?geometries=polyline&overview=false&steps=true&alternatives=false",
+        CONFIGS.routing.host,
+        CONFIGS.routing.port.unwrap_or(80),
+        CONFIGS.routing.url,
+        start.to_osrm_query(),
+        end.to_osrm_query()
+    )
+}
+
+pub async fn calculate_geometry(ty: AreaType, s1: Stop, s2: Stop, client: Option<reqwest::Client>) -> Result<((AreaType, StopPair), Vec<Coords>), reqwest::Error> {
+    let client = client.unwrap_or(reqwest::Client::new());
+    let res = client.get(url_builder(&s1.position, &s2.position))
+        .send()
+        .await?
+        .json::<OsrmResponse>()
+        // .text()
+        .await?;
+
+    Ok(((ty, (s1.id, s2.id)), res.flatten()))
+    // println!("{}", res);
+    // todo!();
 }
 
 
