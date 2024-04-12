@@ -8,7 +8,7 @@ use mongodb::options::FindOptions;
 use tt::{AreaType, RequestOptions, TTRoute, TTTrip, TripQuery, TTStop};
 use chrono::{Local, NaiveTime};
 use bruss_data::{FromTT, Segment, Path, Trip, BrussType, sequence_hash, Route, Stop};
-use log::{info,debug,warn};
+use log::{info,debug,warn,error};
 use bruss_router::CONFIGS;
 use serde::Deserialize;
 
@@ -108,17 +108,28 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     debug!("using start time: {}", time);
     let mut trips_tt: Vec<TTTrip> = Vec::new(); 
     for r in routes {
-        info!("getting route {}...", r.id);
-        let mut ts = tt_client
+        info!("getting route {} ({:?})...", r.id, r.area_ty);
+        let mut ts = match tt_client
             .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new().query(TripQuery { 
-                ty: AreaType::U,
+                ty: r.area_ty,
                 // 5/: 535
                 // 3: 396
                 route_id: r.id,
                 limit: 1024,
                 time 
             })))
-            .await?;
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => { 
+                if CONFIGS.routing.exit_on_err {
+                    return Err(Box::new(e) as Box<dyn std::error::Error>)
+                } else {
+                    error!("skipped route {} ({:?}): {:?}", r.id, r.area_ty, e) 
+                }
+                continue
+            }
+        };
         info!("got {} trips for route {}", ts.len(), r.id);
         trips_tt.append(&mut ts);
     }
