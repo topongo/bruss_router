@@ -1,6 +1,7 @@
 #![feature(iter_intersperse)]
 
 use std::collections::{HashMap, HashSet};
+use bruss_config::CONFIGS;
 use futures::{StreamExt, TryStreamExt};
 
 use mongodb::bson::doc;
@@ -9,7 +10,6 @@ use tt::{AreaType, RequestOptions, TTRoute, TTTrip, TripQuery, TTStop};
 use chrono::{Local, NaiveTime};
 use bruss_data::{FromTT, Segment, Path, Trip, BrussType, sequence_hash, Route, Stop};
 use log::{info,debug,warn,error};
-use bruss_router::CONFIGS;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     info!("done! got {} stops", stops_tt.len());
     let mut stops_missing: Vec<Stop> = Vec::new();
     for s in stops_tt {
+        debug!("{:?}", s);
         if !stop_ids.contains(&s.id) {
             stops_missing.push(Stop::from_tt(s));
         }
@@ -103,53 +104,67 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     };
     info!("done, got {} from database/tt", routes.len());
 
-    info!("getting trips from tt...");
-    let time = Local::now().date_naive().and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-    debug!("using start time: {}", time);
-    let mut trips_tt: Vec<TTTrip> = Vec::new(); 
-    for r in routes {
-        info!("getting route {} ({:?})...", r.id, r.area_ty);
-        let mut ts = match tt_client
-            .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new().query(TripQuery { 
-                ty: r.area_ty,
-                // 5/: 535
-                // 3: 396
-                route_id: r.id,
-                limit: 1024,
-                time 
-            })))
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => { 
-                if CONFIGS.routing.exit_on_err {
-                    return Err(Box::new(e) as Box<dyn std::error::Error>)
-                } else {
-                    error!("skipped route {} ({:?}): {:?}", r.id, r.area_ty, e) 
-                }
-                continue
-            }
-        };
-        info!("got {} trips for route {}", ts.len(), r.id);
-        trips_tt.append(&mut ts);
-    }
-    info!("done! got {} trips from tt", trips_tt.len());
-
     let mut paths_missing: HashMap<String, Path> = HashMap::new();
-    info!("converting trips into bruss type...");
-    let mut trips = Vec::<Trip>::new();
-    // let mut route_hash: HashSet<u16> = HashSet::new();
-    for t in trips_tt {
-        let seq: Vec<u16> = t.stop_times.iter().map(|st| st.stop).collect();
-        let h = sequence_hash(t.ty, &seq);
-        if !path_ids.contains(&h) && !paths_missing.contains_key(&h) {
-            paths_missing.insert(h.clone(), Path::new(seq, t.ty));
+
+    info!("getting trips from database...");
+    let mut trips: Vec<Trip> = Trip::get_coll(&db)
+        .find(doc!{}, None)
+        .await?
+        .try_collect()
+        .await?;
+    info!("done! got {} trips from db", trips.len());
+
+    if CONFIGS.routing.get_trips {
+        info!("getting trips from tt...");
+        let time = Local::now().date_naive().and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        debug!("using start time: {}", time);
+        let mut trips_tt: Vec<TTTrip> = Vec::new(); 
+        for (n, r) in routes.iter().enumerate() {
+            info!("getting route {} ({:?}) [{:3}/{:3}]...", r.id, r.area_ty, n, routes.len());
+            let mut ts = match tt_client
+                .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new().query(TripQuery { 
+                    ty: r.area_ty,
+                    // 5/: 535
+                    // 3: 396
+                    route_id: r.id,
+                    limit: 1024,
+                    time 
+                })))
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => { 
+                    if CONFIGS.routing.exit_on_err {
+                        return Err(Box::new(e) as Box<dyn std::error::Error>)
+                    } else {
+                        error!("skipped route {} ({:?}): {:?}", r.id, r.area_ty, e) 
+                    }
+                    continue
+                }
+            };
+            info!("got {} trips for route {}", ts.len(), r.id);
+            trips_tt.append(&mut ts);
         }
-        if !trip_ids.contains(&t.id) {
-            trips.push(Trip::from_tt(t));
+        info!("done! got {} trips from tt", trips_tt.len());
+
+        info!("converting trips into bruss type...");
+        for t in trips_tt {
+            let seq: Vec<u16> = t.stop_times.iter().map(|st| st.stop).collect();
+            let h = sequence_hash(t.ty, &seq);
+            if !path_ids.contains(&h) && !paths_missing.contains_key(&h) {
+                paths_missing.insert(h.clone(), Path::new(seq, t.ty));
+            }
+            if !trip_ids.contains(&t.id) {
+                trips.push(Trip::from_tt(t));
+            }
         }
+        info!("done! converted {} missing trips, collected {} missing paths", trips.len(), paths_missing.len());
     }
-    info!("done! converted {} missing trips, collected {} missing paths", trips.len(), paths_missing.len());
+
+    if CONFIGS.routing.get_trips {
+        // let mut route_hash: HashSet<u16> = HashSet::new();
+        
+    }
 
     if trips.len() > 0 {
         info!("inserting {} missing trips...", trips.len());
