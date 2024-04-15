@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, time::Duration};
 use bruss_data::{BrussType, Coords, Path, Segment, StopPair, AreaHelper, Stop};
 use log::{debug, info};
 use tokio::task::JoinSet;
@@ -8,6 +8,8 @@ use tt::AreaType;
 use mongodb::bson::doc;
 use futures::{StreamExt,TryStreamExt};
 use bruss_router::{CONFIGS, osrm::calculate_geometry};
+
+static MAX_PARALLEL_REQUESTS: usize = 64;
 
 fn segment_to_geojson(input: &Segment) -> String {
     serde_json::to_string(&input.coords)
@@ -69,22 +71,30 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         }
     }
     info!("done! there are {} missing segments", missing_segments.len());
+    
+    let missing_segments_count = missing_segments.len();
 
     let mut tasks: JoinSet<_> = JoinSet::new();
 
+    let mut pending_segments = Vec::<Segment>::new();
     for (t, sp) in missing_segments {
         let s0 = stops.get(t).get(&sp.0).unwrap().clone();
         let s1 = stops.get(t).get(&sp.1).unwrap().clone();
         tasks.spawn(calculate_geometry(t, s0, s1, None));
+        while tasks.len() > MAX_PARALLEL_REQUESTS {
+            if let Some(uuh) = tasks.join_next().await {
+                debug!("waiting task {}/{}...", pending_segments.len(), missing_segments_count);
+                let ((t, (s0, s1)), c) = uuh??;
+                pending_segments.push(Segment::new(s0, s1, t, c));
+           }
+        }
     }
-    info!("started {} tasks for geometry processing", tasks.len());
-
-    info!("gathering tasks...");
-    let mut pending_segments = Vec::<Segment>::new();
+    debug!("waiting final tasks...");
     while let Some(uuh) = tasks.join_next().await {
         let ((t, (s0, s1)), c) = uuh??;
         pending_segments.push(Segment::new(s0, s1, t, c));
     }
+
     info!("done!");
 
     if pending_segments.len() > 0 {
