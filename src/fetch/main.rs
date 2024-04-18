@@ -6,9 +6,9 @@ use futures::{StreamExt, TryStreamExt};
 
 use mongodb::bson::doc;
 use mongodb::options::FindOptions;
-use tt::{AreaType, RequestOptions, TTRoute, TTTrip, TripQuery, TTStop};
+use tt::{AreaType, RequestOptions, TTArea, TTRoute, TTStop, TTTrip, TripQuery};
 use chrono::{Local, NaiveTime};
-use bruss_data::{FromTT, Segment, Path, Trip, BrussType, sequence_hash, Route, Stop};
+use bruss_data::{sequence_hash, Area, BrussType, FromTT, Path, Route, Segment, Stop, Trip};
 use log::{info,debug,warn,error};
 use serde::Deserialize;
 
@@ -26,6 +26,32 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
     info!("connecting to mongodb database");
     let db = mongodb::Client::with_options(CONFIGS.db.gen_mongodb_options())?.database(CONFIGS.db.get_db());
+
+    info!("getting area ids...");
+    let area_ids: HashSet<u16> = Area::get_coll(&db)
+        .find(doc!{}, None)
+        .await?
+        .map(|r| r.map(|a| a.id))
+        .try_collect()
+        .await?;
+    info!("done! got {} areas", area_ids.len());
+
+    info!("getting areas from tt...");
+    let areas_tt: Vec<TTArea> = tt_client.request().await?;
+    info!("done! got {} areas", areas_tt.len());
+    let mut areas_missing: Vec<Area> = Vec::new();
+    for s in areas_tt {
+        debug!("{:?}", s);
+        if !area_ids.contains(&s.id) {
+            areas_missing.push(Area::from_tt(s));
+        }
+    }
+    if areas_missing.len() > 0 {
+        info!("inserting {} missing areas in db...", areas_missing.len());
+        Area::get_coll(&db).insert_many(areas_missing, None).await?;
+        info!("done!");
+    }
+
 
     info!("getting stop ids...");
     let stop_ids: HashSet<u16> = Stop::get_coll(&db)
@@ -161,7 +187,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             }
         }
 
-        if trips.len() > 0 {
+        if trips.iter().filter(|t| !trip_ids.contains(&t.id)).count() > 0 {
             info!("inserting {} missing trips...", trips.len());
             Trip::get_coll(&db).insert_many(
                 trips.iter()

@@ -27,7 +27,8 @@ fn path_to_geojson(input: &Path, segments: HashMap<(StopPair, AreaType), Segment
 
 #[tokio::main]
 async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
-    env_logger::init(); 
+    env_logger::init();
+    debug!("current configuration: {:?}", CONFIGS.routing);
 
     info!("connecting to database...");
     let db = mongodb::Client::with_options(CONFIGS.db.gen_mongodb_options()).expect("error creating mongodb client").database(CONFIGS.db.get_db());
@@ -66,6 +67,9 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         for s in p.segments() {
             if !segments.contains(&(p.ty, s)) {
                 debug!("missing segment: {:?}", (p.ty, s));
+                if CONFIGS.routing.skip_routing_types.contains(&p.rty) {
+                    continue
+                }
                 missing_segments.insert((p.ty, (s, p.rty)));
             }
         }
