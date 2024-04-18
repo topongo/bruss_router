@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use std::{collections::{HashMap, HashSet}, time::Duration};
-use bruss_data::{BrussType, Coords, Path, Segment, StopPair, AreaHelper, Stop};
+use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
+use bruss_data::{AreaHelper, BrussType, Coords, Path, RoutingType, Segment, Stop, StopPair};
 use log::{debug, info};
 use tokio::task::JoinSet;
 use tt::AreaType;
@@ -61,12 +61,12 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     info!("done! got {} stops from db", stops.len());
    
     info!("checking for missing segments...");
-    let mut missing_segments: HashSet<(AreaType, StopPair)> = HashSet::new();
+    let mut missing_segments: HashSet<(AreaType, (StopPair, RoutingType))> = HashSet::new();
     for p in paths.values() {
         for s in p.segments() {
             if !segments.contains(&(p.ty, s)) {
                 debug!("missing segment: {:?}", (p.ty, s));
-                missing_segments.insert((p.ty, s));
+                missing_segments.insert((p.ty, (s, p.rty)));
             }
         }
     }
@@ -76,11 +76,12 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
     let mut tasks: JoinSet<_> = JoinSet::new();
 
+    let cli = Arc::new(reqwest::Client::new());
     let mut pending_segments = Vec::<Segment>::new();
-    for (t, sp) in missing_segments {
+    for (t, (sp, ty)) in missing_segments {
         let s0 = stops.get(t).get(&sp.0).unwrap().clone();
         let s1 = stops.get(t).get(&sp.1).unwrap().clone();
-        tasks.spawn(calculate_geometry(t, s0, s1, None));
+        tasks.spawn(calculate_geometry(t, s0, s1, cli.clone(), ty));
         while tasks.len() > MAX_PARALLEL_REQUESTS {
             if let Some(uuh) = tasks.join_next().await {
                 debug!("waiting task {}/{}...", pending_segments.len(), missing_segments_count);

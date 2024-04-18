@@ -1,4 +1,6 @@
-use bruss_data::{Stop,Coords, StopPair};
+use std::sync::Arc;
+
+use bruss_data::{Coords, RoutingType, Stop, StopPair};
 use polyline::decode_polyline;
 use serde::Deserialize;
 use tt::AreaType;
@@ -58,20 +60,26 @@ impl OsrmResponse {
     }
 }
 
-pub fn url_builder(start: &Coords, end: &Coords) -> String {
+pub fn url_builder(start: &Coords, end: &Coords, ty: RoutingType) -> String {
     format!(
         "http://{}:{}/{}/{};{}?geometries=polyline&overview=false&steps=true&alternatives=false",
         CONFIGS.routing.host,
         CONFIGS.routing.port.unwrap_or(80),
-        CONFIGS.routing.url,
+        match ty {
+            RoutingType::Bus => &CONFIGS.routing.url_bus,
+            RoutingType::Railway => &CONFIGS.routing.url_rail,
+            _ => panic!()
+        },
         start.to_osrm_query(),
         end.to_osrm_query()
     )
 }
 
-pub async fn calculate_geometry(ty: AreaType, s1: Stop, s2: Stop, client: Option<reqwest::Client>) -> Result<((AreaType, StopPair), Vec<Coords>), reqwest::Error> {
-    let client = client.unwrap_or(reqwest::Client::new());
-    let res = client.get(url_builder(&s1.position, &s2.position))
+pub async fn calculate_geometry(ty: AreaType, s1: Stop, s2: Stop, client: Arc<reqwest::Client>, r_ty: RoutingType) -> Result<((AreaType, StopPair), Vec<Coords>), reqwest::Error> {
+    if r_ty == RoutingType::Cableway {
+        return Ok(((ty, (s1.id, s2.id)), vec![s1.position, s2.position]))
+    }
+    let res = client.get(url_builder(&s1.position, &s2.position, r_ty))
         .send()
         .await?
         .json::<OsrmResponse>()

@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         .try_collect()
         .await?;
 
-    info!("done! got {} segments", trip_ids.len());
+    info!("done! got {} trips", trip_ids.len());
 
     let routes_c = Route::get_coll(&db);
     info!("getting routes from db...");
@@ -85,13 +85,13 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         warn!("no routes in db, getting them from tt...");
         let routes_tt = tt_client.request::<TTRoute>().await.unwrap();
         info!("got {} routes from tt", routes_tt.len());
-        let mut routes_bruss = Vec::with_capacity(routes_tt.len());
+        let mut routes_bruss = HashMap::with_capacity(routes_tt.len());
         for rt in routes_tt {
-            routes_bruss.push(Route::from_tt(rt));
+            routes_bruss.insert(rt.id, Route::from_tt(rt));
         }
         if routes_bruss.len() > 0 {
             info!("inserting fetched routes into db");
-            routes_c.insert_many(&routes_bruss, None).await.expect("couln't insert routes into database");
+            routes_c.insert_many(routes_bruss.values(), None).await.expect("couln't insert routes into database");
             info!("done!");
         }
         routes_bruss
@@ -99,6 +99,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         routes_c 
             .find(doc!{}, None)
             .await?
+            .map(|r| r.map(|ro| (ro.id, ro)))
             .try_collect()
             .await?
     };
@@ -119,7 +120,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         let time = Local::now().date_naive().and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
         debug!("using start time: {}", time);
         let mut trips_tt: Vec<TTTrip> = Vec::new(); 
-        for (n, r) in routes.iter().enumerate() {
+        for (n, r) in routes.values().enumerate() {
             info!("getting route {} ({:?}) [{:3}/{:3}]...", r.id, r.area_ty, n, routes.len());
             let mut ts = match tt_client
                 .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new().query(TripQuery { 
@@ -150,27 +151,26 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         info!("converting trips into bruss type...");
         for t in trips_tt {
             let seq: Vec<u16> = t.stop_times.iter().map(|st| st.stop).collect();
+            let route = routes.get(&t.route).unwrap();
             let h = sequence_hash(t.ty, &seq);
             if !path_ids.contains(&h) && !paths_missing.contains_key(&h) {
-                paths_missing.insert(h.clone(), Path::new(seq, t.ty));
+                paths_missing.insert(h.clone(), Path::new(seq, t.ty, route.into()));
             }
             if !trip_ids.contains(&t.id) {
                 trips.push(Trip::from_tt(t));
             }
         }
+
+        if trips.len() > 0 {
+            info!("inserting {} missing trips...", trips.len());
+            Trip::get_coll(&db).insert_many(
+                trips.iter()
+                    .filter(|t| !trip_ids.contains(&t.id))
+                , None).await?;
+            info!("done!");
+        }
         info!("done! converted {} missing trips, collected {} missing paths", trips.len(), paths_missing.len());
-    }
-
-    if CONFIGS.routing.get_trips {
-        // let mut route_hash: HashSet<u16> = HashSet::new();
-        
-    }
-
-    if trips.len() > 0 {
-        info!("inserting {} missing trips...", trips.len());
-        Trip::get_coll(&db).insert_many(trips, None).await?;
-        info!("done!");
-    }
+    } 
 
     if paths_missing.len() > 0 {
         info!("inserting {} missing paths...", paths_missing.len());
