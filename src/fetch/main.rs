@@ -187,14 +187,6 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             }
         }
 
-        if trips.iter().filter(|t| !trip_ids.contains(&t.id)).count() > 0 {
-            info!("inserting {} missing trips...", trips.len());
-            Trip::get_coll(&db).insert_many(
-                trips.iter()
-                    .filter(|t| !trip_ids.contains(&t.id))
-                , None).await?;
-            info!("done!");
-        }
         info!("done! converted {} missing trips, collected {} missing paths", trips.len(), paths_missing.len());
     } 
 
@@ -203,6 +195,19 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         Path::get_coll(&db).insert_many(paths_missing.values(), None).await?;
         info!("done!")
     }
+
+    if CONFIGS.routing.get_trips {
+        if trips.iter().filter(|t| !trip_ids.contains(&t.id)).count() > 0 {
+            info!("inserting {} missing trips...", trips.len());
+            Trip::get_coll(&db).insert_many(
+                trips.iter()
+                    .filter(|t| !trip_ids.contains(&t.id))
+                , None).await?;
+            info!("done!");
+        }
+    }
+
+
 
     Ok(())
 }
