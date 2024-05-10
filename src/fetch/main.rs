@@ -106,7 +106,8 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     info!("done! got {} trips", trip_ids.len());
 
     let routes_c = Route::get_coll(&db);
-    info!("getting routes from db...");
+    info!("getting routes...");
+    debug!("there are {} routes in db", routes_c.count_documents(doc!{}, None).await.unwrap());
     let routes = if routes_c.count_documents(doc!{}, None).await.unwrap() == 0 {
         warn!("no routes in db, getting them from tt...");
         let routes_tt = tt_client.request::<TTRoute>().await.unwrap();
@@ -122,6 +123,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         }
         routes_bruss
     } else {
+        info!("getting routes from db...");
         routes_c 
             .find(doc!{}, None)
             .await?
@@ -187,7 +189,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             }
         }
 
-        info!("done! converted {} missing trips, collected {} missing paths", trips.len(), paths_missing.len());
+        info!("done! converted {} trips, collected {} missing paths", trips.len(), paths_missing.len());
     } 
 
     if paths_missing.len() > 0 {
@@ -204,6 +206,8 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
                     .filter(|t| !trip_ids.contains(&t.id))
                 , None).await?;
             info!("done!");
+        } else {
+            info!("no trips inserted")
         }
     }
 
