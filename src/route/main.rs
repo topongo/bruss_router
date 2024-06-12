@@ -12,14 +12,14 @@ use bruss_router::{CONFIGS, osrm::calculate_geometry};
 static MAX_PARALLEL_REQUESTS: usize = 64;
 
 fn segment_to_geojson(input: &Segment) -> String {
-    serde_json::to_string(&input.coords)
+    serde_json::to_string(&input.geometry)
         // won't fail
         .unwrap()
 }
 
 fn path_to_geojson(input: &Path, segments: HashMap<(StopPair, AreaType), Segment>) -> String {
     serde_json::to_string(&input.segments().iter()
-            .flat_map(|s| &segments.get(&(*s, input.ty)).unwrap().coords)
+            .flat_map(|s| &segments.get(&(*s, input.ty)).unwrap().geometry)
             .collect::<Vec<&Coords>>()
         )
         .unwrap()
