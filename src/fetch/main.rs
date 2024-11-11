@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             areas_missing.push(Area::from_tt(s));
         }
     }
-    if areas_missing.len() > 0 {
+    if !areas_missing.is_empty() {
         info!("inserting {} missing areas in db...", areas_missing.len());
         Area::get_coll(&db).insert_many(areas_missing, None).await?;
         info!("done!");
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             stops_missing.push(Stop::from_tt(s));
         }
     }
-    if stops_missing.len() > 0 {
+    if !stops_missing.is_empty() {
         info!("inserting {} missing stops in db...", stops_missing.len());
         Stop::get_coll(&db).insert_many(stops_missing, None).await?;
         info!("done!");
@@ -96,14 +96,14 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     info!("done! got {} segments", segment_ids.len());
 
     info!("getting trip ids...");
-    let trip_ids: HashSet<String> = db.collection::<IdDocument<String>>("trips")
-        .find(doc!{}, FindOptions::builder().projection(doc!{"id": 1, "_id": 0}).build())
+    let trips: HashMap<String, Trip> = Trip::get_coll(&db)
+        .find(doc!{}, None)
         .await?
-        .map(|r| r.map(|d| d.id))
+        .map(|r| r.map(|d| (d.id.clone(), d)))
         .try_collect()
         .await?;
 
-    info!("done! got {} trips", trip_ids.len());
+    info!("done! got {} trips", trips.len());
 
     let routes_c = Route::get_coll(&db);
     info!("getting routes...");
@@ -116,7 +116,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         for rt in routes_tt {
             routes_bruss.insert(rt.id, Route::from_tt(rt));
         }
-        if routes_bruss.len() > 0 {
+        if !routes_bruss.is_empty() {
             info!("inserting fetched routes into db");
             routes_c.insert_many(routes_bruss.values(), None).await.expect("couln't insert routes into database");
             info!("done!");
@@ -136,22 +136,22 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     let mut paths_missing: HashMap<String, Path> = HashMap::new();
 
     info!("getting trips from database...");
-    let mut trips: Vec<Trip> = Trip::get_coll(&db)
+    let mut trips_tt: Vec<Trip> = Trip::get_coll(&db)
         .find(doc!{}, None)
         .await?
         .try_collect()
         .await?;
-    info!("done! got {} trips from db", trips.len());
+    info!("done! got {} trips from db", trips_tt.len());
 
     if CONFIGS.routing.get_trips {
         info!("getting trips from tt...");
         let time = Local::now().date_naive().and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
         debug!("using start time: {}", time);
-        let mut trips_tt: Vec<TTTrip> = Vec::new(); 
+        let mut trips_tt_inner: Vec<TTTrip> = Vec::new(); 
         for (n, r) in routes.values().enumerate() {
             info!("getting route {} ({:?}) [{:3}/{:3}]...", r.id, r.area_ty, n, routes.len());
             let mut ts = match tt_client
-                .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new().query(TripQuery { 
+                .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery { 
                     ty: r.area_ty,
                     // 5/: 535
                     // 3: 396
@@ -172,38 +172,69 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
                 }
             };
             info!("got {} trips for route {}", ts.len(), r.id);
-            trips_tt.append(&mut ts);
+            trips_tt_inner.append(&mut ts);
         }
-        info!("done! got {} trips from tt", trips_tt.len());
+        info!("done! got {} trips from tt", trips_tt_inner.len());
 
         info!("converting trips into bruss type...");
-        for t in trips_tt {
+        for t in trips_tt_inner {
             let seq: Vec<u16> = t.stop_times.iter().map(|st| st.stop).collect();
             let route = routes.get(&t.route).unwrap();
             let h = sequence_hash(t.ty, &seq);
             if !path_ids.contains(&h) && !paths_missing.contains_key(&h) {
                 paths_missing.insert(h.clone(), Path::new(seq, t.ty, route.into()));
             }
-            if !trip_ids.contains(&t.id) {
-                trips.push(Trip::from_tt(t));
+            if !trips.contains_key(&t.id) {
+                trips_tt.push(Trip::from_tt(t));
             }
         }
 
         info!("done! converted {} trips, collected {} missing paths", trips.len(), paths_missing.len());
     } 
 
-    if paths_missing.len() > 0 {
+    if !paths_missing.is_empty() {
         info!("inserting {} missing paths...", paths_missing.len());
         Path::get_coll(&db).insert_many(paths_missing.values(), None).await?;
         info!("done!")
     }
 
     if CONFIGS.routing.get_trips {
-        if trips.iter().filter(|t| !trip_ids.contains(&t.id)).count() > 0 {
-            info!("inserting {} missing trips...", trips.len());
+        let missing_trips = trips_tt.iter().filter(|t| !trips.contains_key(&t.id)).collect::<Vec<_>>();
+        if !missing_trips.is_empty() {
+            info!("inserting {} missing trips...", missing_trips.len());
+            Trip::get_coll(&db).insert_many(missing_trips, None).await?;
+        }
+        let _ = if CONFIGS.routing.deep_trip_check {
+            info!("checking for differences in trips...");
+            let mut c = 0;
+            for t in &trips_tt {
+                if !trips.contains_key(&t.id) {
+                    // we just inserted this trip, skip it
+                    continue
+                }
+                // we are sure that the trip is in the database, cause we skipped the ones that
+                // aren't
+                if trips.get(&t.id).unwrap().deep_cmp(&t) {
+                    debug!("trip {} is the same on db and on tt", t.id);
+                } else {
+                    warn!("trip {} is different on db and on tt", t.id);
+                    c += 1;
+                }
+            }
+            if c > 0 {
+                warn!("{} trips are different on db and on tt", c);
+            } else {
+                info!("all trips are the same on db and on tt");
+            }
+        // } else {
+        //     trips_tt.iter().filter(|t| !trips.contains_key(&t.id))
+        };
+
+        if trips_tt.iter().filter(|t| !trips.contains_key(&t.id)).count() > 0 {
+            info!("inserting {} missing trips...", trips_tt.len());
             Trip::get_coll(&db).insert_many(
-                trips.iter()
-                    .filter(|t| !trip_ids.contains(&t.id))
+                trips_tt.iter()
+                    .filter(|t| !trips.contains_key(&t.id))
                 , None).await?;
             info!("done!");
         } else {
