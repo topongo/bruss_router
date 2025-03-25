@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tt = { path = "../tt" }
+tt = { path = "../tt", features = ["stats"] }
 bruss_config = { path = "../config" }
 bruss_data = { path = "../data", features = ["db"] }
 lazy_static = "1.4"
