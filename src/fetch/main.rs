@@ -1,18 +1,18 @@
 #![feature(iter_intersperse)]
 
 use std::{collections::{HashMap, HashSet}, sync::Arc};
-use async_stream::{stream, try_stream};
+use async_stream::try_stream;
 use bruss_config::CONFIGS;
 use futures::{Stream, StreamExt, TryStreamExt};
 
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
 use tokio::{sync::{Mutex, Semaphore}, task::JoinHandle};
 use tt::{AreaType, RequestOptions, TTArea, TTClient, TTResult, TTRoute, TTStop, TTTrip, TripQuery};
-use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, TimeZone, Utc};
+use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Europe::Rome;
 use bruss_data::{sequence_hash, Area, BrussType, FromTT, Path, Route, Schedule, Segment, Stop, Trip};
-use log::{info,debug,warn,error};
+use log::{info,debug,warn};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -239,15 +239,18 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     );
 
     if CONFIGS.routing.get_trips {
+        let mut tot_routes = 0;
         info!("getting trips from tt...");
         let tt_client = Arc::new(CONFIGS.tt.client());
-        let dl = ParallelDownloader::new(Arc::clone(&tt_client), 5);
+        let dl = ParallelDownloader::new(Arc::clone(&tt_client), 20);
         for (n, r) in routes
             .values()
             // uncomment to get only a specific route
-            .filter(|r| r.code == "5" && r.area == 23)
+            .filter(|r| r.code == "7" && r.area == 23)
             .enumerate()
+            // .filter(|(n, _)| *n < 200)
         {
+            tot_routes += 1;
             let mut time = bounds.0.and_time(NaiveTime::from_hms_opt(4, 0, 0).unwrap());
             debug!("using start time: {}", time);
             while time.date() <= bounds.1 {
@@ -255,7 +258,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
                 dl.request(r.area_ty, r.id, time).await;
 
-                time += chrono::Duration::days(1);
+                time += Duration::days(1);
             } 
         }
 
@@ -276,7 +279,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
                     route_prev = t.route as i32;
                     route_c += 1;
                 }
-                info!("processing trip {} of route {} [{:3}/{:3}] on day {}", t.id, t.route, route_c, routes.len(), time.date());
+                info!("processing trip {} of route {} [{:3}/{:3}] on day {}", t.id, t.route, route_c, tot_routes, time.date());
                 // insert missing path
                 if !trips.contains_key(&t.id) && !trips_missing.contains_key(&t.id) {
                     let seq: Vec<u16> = t.stop_times.iter().map(|st| st.stop).collect();
