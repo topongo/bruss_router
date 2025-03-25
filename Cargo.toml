@@ -18,13 +18,13 @@ assert_matches = "1.5"
 futures = "0.3"
 serde_json = "^1"
 mongodb = { workspace = true }
+bson = { workspace = true }
 uuid = { version = "^1.8", features = ["fast-rng", "v4", "serde"] }
 log = "0.4.21"
 env_logger = "0.11.3"
 chrono-tz = "0.10.0"
 async-stream = "0.3.6"
 # md5 = "0.7.0"
-# bson = "2.10.0"
 
 [dev-dependencies]
 rand = "0.8.5"
