@@ -5,7 +5,7 @@ use async_stream::try_stream;
 use bruss_config::CONFIGS;
 use futures::{Stream, StreamExt, TryStreamExt};
 
-use mongodb::bson::{doc, Document};
+use mongodb::bson::doc;
 use mongodb::options::FindOptions;
 use tokio::{sync::{Mutex, Semaphore}, task::JoinHandle};
 use tt::{AreaType, RequestOptions, TTArea, TTClient, TTResult, TTRoute, TTStop, TTTrip, TripQuery};
@@ -29,11 +29,11 @@ struct ParallelDownloader {
 }
 
 impl ParallelDownloader {
-    fn new(client: Arc<TTClient>, max_concurrent: usize) -> Self {
+    fn new(client: Arc<TTClient>) -> Self {
         Self {
             client,
             jobs: Arc::new(Mutex::new(Vec::new())),
-            semaphore: Arc::new(Semaphore::new(max_concurrent)) 
+            semaphore: Arc::new(Semaphore::new(CONFIGS.routing.parallel_downloads.unwrap_or(5))),
         }
     }
 
@@ -242,7 +242,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         let mut tot_routes = 0;
         info!("getting trips from tt...");
         let tt_client = Arc::new(CONFIGS.tt.client());
-        let dl = ParallelDownloader::new(Arc::clone(&tt_client), 20);
+        let dl = ParallelDownloader::new(Arc::clone(&tt_client));
         for (n, r) in routes
             .values()
             // uncomment to get only a specific route
@@ -264,7 +264,6 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
         let st = dl.wait();
         tokio::pin!(st);
-        let mut num_req = 0;
         let mut route_prev = -1;
         let mut route_c = -1;
         while let Some(ts) = st.next().await {
@@ -273,7 +272,6 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             //     info!("telemetry for tt client: {}", tt_client.print_telemetry().await);
             //     panic!();
             // }
-            num_req += 1;
             for t in ts {
                 if route_prev != t.route as i32 {
                     route_prev = t.route as i32;
