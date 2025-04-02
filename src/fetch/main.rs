@@ -246,7 +246,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         for (n, r) in routes
             .values()
             // uncomment to get only a specific route
-            .filter(|r| r.code == "7" && r.area == 23)
+            // .filter(|r| r.code == "7" && r.area == 23)
             .enumerate()
             // .filter(|(n, _)| *n < 200)
         {
@@ -382,8 +382,10 @@ mod tests {
 
     use bruss_config::CONFIGS;
     use bruss_data::{Direction, FromTT, Route, Stop, Trip};
-    use chrono::{Datelike, Local, NaiveDate, NaiveTime, TimeDelta};
-    use tt::{RequestOptions, TTRoute, TTStop, TTTrip, TripQuery};
+    use bson::{doc, Document};
+    use chrono::{Datelike, Local, NaiveDate, NaiveTime, TimeDelta, Utc};
+    use futures::{StreamExt, TryStreamExt};
+    use tt::{AreaType, RequestOptions, TTRoute, TTStop, TTTrip, TripQuery};
 
     async fn get_routes() -> Vec<Route> {
         let c = CONFIGS.tt.client();
@@ -770,6 +772,124 @@ mod tests {
         for i in 0..400000 {
             let t = format!("{:09}{}{}", i, bounds.0.format("%Y%m%d"), bounds.1.format("%Y%m%d"));
             println!("requesting trip {}...", t);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_trip_time_stop_query() {
+        use serde::Deserialize;
+
+        let db = mongodb::Client::with_options(CONFIGS.db.gen_mongodb_options()).unwrap().database(CONFIGS.db.get_db());
+        let stop = 423;
+        let area = AreaType::U;
+        let time = Utc::now();
+
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+            departure: chrono::DateTime<Utc>,
+            trip: Trip,
+        }
+
+        let stop_time_string = format!("$hints.times.{}.arrival[0]", stop);
+        let slen = stop_time_string.len();
+
+        print!("running query...");
+        let start = Instant::now();
+        let trips: Vec<R> = db.collection::<Document>("schedules")
+            .aggregate(vec![
+                doc!{"$match": {"$and": [
+                    // filter by area
+                    {"hints.type": area.to_string()},
+                    // filter by stop, if present in hits.times
+                    {&stop_time_string[1..slen - 3]: {"$exists": true}},
+                ]}},
+                // calculate arrival at stop
+                doc!{"$set": {"arrival_at_stop": {"$add": ["$departure", {"$multiply": [1000, {"$arrayElemAt": [&stop_time_string[0..slen - 3], 0]}]}]}}},
+                // filter by arrival at stop
+                doc!{"$match": {"arrival_at_stop": {"$gte": time}}},
+                // sort by arrival at specific stop: we can't simply sort by general departure.
+                doc!{"$sort": {"arrival_at_stop": 1}},
+                // lookup trip
+                doc!{"$lookup": {"from": "trips","localField": "id","foreignField": "id","as": "trip"}},
+                // strip $lookup result
+                doc!{"$unwind": "$trip"},
+                // hard limit results
+                doc!{"$limit": 100},
+                // project only the necessary fields
+                doc!{"$project": {"_id": 0,"trip": 1,"departure": 1}},
+                // doc!{"$set": {"arrival_at_stop": }}
+            ], None)
+            .await
+            .unwrap()
+            .map(|r| r.map(|d| bson::from_document(d).unwrap()))
+            .try_collect()
+            .await
+            .unwrap();
+        println!(" done! that took {} seconds", start.elapsed().as_secs_f64());
+
+        assert!(!trips.is_empty());
+        println!("got {} trips", trips.len());
+        for t in trips {
+            // this is not right: the trip can start before the set time, while the bus can arrive at
+            // the stop after the set time
+            // assert!(t.departure > time);
+            assert!(t.trip.times.has_stop(&stop));
+            assert_eq!(t.trip.ty, area);
+            assert!(t.departure + t.trip.times.get(&stop).unwrap().arrival >= time);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_trip_time_route_query() {
+        use serde::Deserialize;
+
+        let db = mongodb::Client::with_options(CONFIGS.db.gen_mongodb_options()).unwrap().database(CONFIGS.db.get_db());
+        let route = 402;
+        let area = AreaType::U;
+        let time = Utc::now();
+
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+            departure: chrono::DateTime<Utc>,
+            trip: Trip,
+        }
+
+        let trips: Vec<R> = db.collection::<Document>("schedules")
+            .aggregate(vec![
+                doc!{"$match": {"$and": [
+                    // we don't need to filter by area, since ids are unique across areas, unlike stops.
+                    // // filter by area
+                    // {"hints.type": area.to_string()},
+                    // filter by route
+                    {"hints.route": route as i32},
+                    // filter by general departure
+                    {"departure": {"$gte": time}},
+                ]}},
+                // sort by general departure
+                doc!{"$sort": {"departure": 1}},
+                // lookup trip
+                doc!{"$lookup": {"from": "trips","localField": "id","foreignField": "id","as": "trip"}},
+                // strip $lookup result
+                doc!{"$unwind": "$trip"},
+                // hard limit results
+                doc!{"$limit": 100},
+                // project only the necessary fields
+                doc!{"$project": {"_id": 0,"trip": 1,"departure": 1}},
+            ], None)
+            .await
+            .unwrap()
+            .map(|r| r.map(|d| bson::from_document(d).unwrap()))
+            .try_collect()
+            .await
+            .unwrap();
+        assert!(!trips.is_empty());
+        println!("got {} trips", trips.len());
+        for t in trips {
+            assert!(t.departure >= time);
+            assert_eq!(t.trip.route, route);
+            assert_eq!(t.trip.ty, area);
         }
     }
 }
