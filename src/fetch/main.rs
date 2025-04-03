@@ -980,8 +980,10 @@ mod tests {
                     // filter by stop, if present in hits.times
                     {&stop_time_string[1..slen - 3]: {"$exists": true}},
                 ]}},
+                doc!{"$match": {"$and": [{"departure": {"$gte": time - TimeDelta::hours(4)}}, {"departure": {"$lt": time + TimeDelta::days(1)}}]}},
+                // doc!{"$limit": 100},
                 // calculate arrival at stop
-                doc!{"$set": {"arrival_at_stop": {"$add": ["$departure", {"$multiply": [1000, {"$arrayElemAt": [&stop_time_string[0..slen - 3], 0]}]}]}}},
+                doc!{"$addFields": {"arrival_at_stop": {"$add": ["$departure", {"$multiply": [1000, {"$arrayElemAt": [&stop_time_string[0..slen - 3], 0]}]}]}}},
                 // filter by arrival at stop
                 doc!{"$match": {"arrival_at_stop": {"$gte": time}}},
                 // sort by arrival at specific stop: we can't simply sort by general departure.
