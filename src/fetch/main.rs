@@ -66,6 +66,179 @@ impl ParallelDownloader {
     }
 }
 
+#[allow(dead_code)]
+mod migrations {
+    use futures::TryStreamExt;
+    use log::info;
+    use tt::AreaType;
+    use bruss_data::{StopTimes, Direction};
+    use serde::{Serialize, Deserialize};
+    use chrono::{TimeDelta, Utc};
+    use mongodb::bson::doc;
+
+    pub(crate) async fn add_arrival_to_schedules_hints(db: &mongodb::Database) -> Result<(), mongodb::error::Error> {
+        // #[derive(serde::Serialize,Debug,PartialEq)]
+        // struct ScheduleHintsNew {
+        //     #[serde(rename = "type")]
+        //     route: u16,
+        //     ty: AreaType,
+        //     times: StopTimes,
+        //     direction: Direction,
+        //     arrival: DateTime<Utc>,
+        // }
+
+        // #[derive(Deserialize)]
+        // struct ScheduleHintsOld {
+        //     #[serde(rename = "type")]
+        //     route: u16,
+        //     ty: AreaType,
+        //     times: StopTimes,
+        //     direction: Direction,
+        // }
+
+        #[derive(Serialize)]
+        struct ScheduleNew {
+            id: String,
+            #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+            departure: chrono::DateTime<Utc>,
+            #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+            arrival: chrono::DateTime<Utc>,
+            hints: bruss_data::ScheduleHints,
+        }
+
+        #[derive(Deserialize)]
+        struct ScheduleOld {
+            id: String,
+            #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+            departure: chrono::DateTime<Utc>,
+            hints: bruss_data::ScheduleHints,
+        }
+
+        info!("getting all schedules from db...");
+        // get all schedules from db
+        let schedules: Vec<ScheduleOld> = db
+            .collection::<ScheduleOld>("schedules")
+            .find(doc!{}, None)
+            .await?
+            .try_collect()
+            .await?;
+
+        info!("got {} schedules", schedules.len());
+        info!("converting schedules to new format...");
+        let schedules = schedules.into_iter()
+            .map(|s| {
+                let ScheduleOld { id, departure, hints } = s;
+                let bruss_data::ScheduleHints { route, ty, times, direction } = hints;
+                let arrival = departure + times.iter().max_by_key(|v| v.1.arrival.max(v.1.departure)).unwrap().1.arrival;
+                for i in times.iter() {
+                    println!("{}: {} -> {}", i.0, i.1.arrival.num_minutes(), i.1.departure.num_minutes());
+                }
+                println!("{}", departure);
+                println!("{}", arrival);
+                let hints = bruss_data::ScheduleHints {
+                    route,
+                    ty,
+                    times,
+                    direction,
+                };
+                ScheduleNew { id, departure, hints, arrival }
+            })
+            .collect::<Vec<_>>();
+
+        info!("clearing current db...");
+        db
+            .collection::<ScheduleOld>("schedules")
+            .delete_many(doc!{}, None)
+            .await?;
+
+        info!("repopulating db...");
+        db
+            .collection::<ScheduleNew>("schedules")
+            .insert_many(schedules, None)
+            .await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn revert_arrival_to_departure(db: &mongodb::Database) -> Result<(), mongodb::error::Error> {
+        #[derive(serde::Serialize,Debug,PartialEq)]
+        struct ScheduleHintsNew {
+            #[serde(rename = "type")]
+            route: u16,
+            ty: AreaType,
+            times: StopTimes,
+            direction: Direction,
+            arrival: TimeDelta,
+        }
+
+        #[derive(Deserialize)]
+        struct ScheduleHintsOld {
+            #[serde(rename = "type")]
+            route: u16,
+            ty: AreaType,
+            times: StopTimes,
+            direction: Direction,
+            arrival: chrono::DateTime<Utc>,
+        }
+
+        #[derive(Serialize)]
+        struct ScheduleNew {
+            id: String,
+            #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+            departure: chrono::DateTime<Utc>,
+            hints: ScheduleHintsNew,
+        }
+
+        #[derive(Deserialize)]
+        struct ScheduleOld {
+            id: String,
+            // broken at this time
+            // departure: chrono::DateTime<Utc>,
+            hints: ScheduleHintsOld,
+        }
+
+        // get all schedules from db
+        let schedules: Vec<ScheduleOld> = db
+            .collection::<ScheduleOld>("schedules")
+            .find(doc!{}, None)
+            .await?
+            // .map(|r| r.map(|s| ((s.id.clone(), s.departure), s)))
+            .try_collect()
+            .await?;
+
+        let schedules = schedules.into_iter()
+            .map(|s| {
+                let ScheduleOld { id, hints } = s;
+                let ScheduleHintsOld { route, ty, times, direction, arrival } = hints;
+                let arrival_td = times.iter().max_by_key(|v| v.1.arrival.max(v.1.departure)).unwrap().1.arrival;
+                let departure = arrival - arrival_td;
+                let hints = ScheduleHintsNew {
+                    route,
+                    ty,
+                    times,
+                    direction,
+                    arrival: arrival_td,
+                };
+                ScheduleNew { id, departure, hints }
+            })
+            .collect::<Vec<_>>();
+
+        // clear current db
+        db
+            .collection::<ScheduleOld>("schedules")
+            .delete_many(doc!{}, None)
+            .await?;
+
+        // repopulate
+        db
+            .collection::<ScheduleNew>("schedules")
+            .insert_many(schedules, None)
+            .await?;
+
+        Ok(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     env_logger::init(); 
@@ -75,6 +248,9 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
     info!("connecting to mongodb database");
     let db = mongodb::Client::with_options(CONFIGS.db.gen_mongodb_options())?.database(CONFIGS.db.get_db());
+
+    // migrations::add_arrival_to_schedules_hints(&db).await?;
+    // todo!();
 
     info!("getting area ids...");
     let area_ids: HashSet<u16> = Area::get_coll(&db)
