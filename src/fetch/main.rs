@@ -273,7 +273,11 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     }
     if !areas_missing.is_empty() {
         info!("inserting {} missing areas in db...", areas_missing.len());
-        Area::get_coll(&db).insert_many(areas_missing, None).await?;
+        if CONFIGS.routing.dry_run {
+            info!("dry run, not modifying db");
+        } else {
+            Area::get_coll(&db).insert_many(areas_missing, None).await?;
+        }
         info!("done!");
     }
 
@@ -299,7 +303,11 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     }
     if !stops_missing.is_empty() {
         info!("inserting {} missing stops in db...", stops_missing.len());
-        Stop::get_coll(&db).insert_many(stops_missing, None).await?;
+        if CONFIGS.routing.dry_run {
+            info!("dry run, not modifying db");
+        } else {
+            Stop::get_coll(&db).insert_many(stops_missing, None).await?;
+        }
         info!("done!");
     }
 
@@ -343,7 +351,11 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         }
         if !routes_bruss.is_empty() {
             info!("inserting fetched routes into db");
-            routes_c.insert_many(routes_bruss.values(), None).await.expect("couln't insert routes into database");
+            if CONFIGS.routing.dry_run {
+                info!("dry run, not modifying db");
+            } else {
+                routes_c.insert_many(routes_bruss.values(), None).await.expect("couln't insert routes into database");
+            }
             info!("done!");
         }
         routes_bruss
@@ -493,22 +505,34 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
     if !paths_missing.is_empty() {
         info!("inserting {} missing paths...", paths_missing.len());
-        Path::get_coll(&db).insert_many(paths_missing.values(), None).await?;
+        if CONFIGS.routing.dry_run {
+            info!("dry run, not modifying db");
+        } else {
+            Path::get_coll(&db).insert_many(paths_missing.values(), None).await?;
+        }
         info!("done!")
     }
 
     if !sched_missing.is_empty() {
         info!("inserting {} missing schedules...", sched_missing.len());
-        Schedule::get_coll(&db).insert_many(
-            sched_missing,
-            None
-        ).await?;
+        if CONFIGS.routing.dry_run {
+            info!("dry run, not modifying db");
+        } else {
+            Schedule::get_coll(&db).insert_many(
+                sched_missing.values(),
+                None
+            ).await?;
+        }
         info!("done!")
     }
 
     if CONFIGS.routing.get_trips && !trips_missing.is_empty() {
         info!("inserting {} missing trips...", trips_missing.len());
-        Trip::get_coll(&db).insert_many(trips_missing.values(), None).await?;
+        if CONFIGS.routing.dry_run {
+            info!("dry run, not modifying db");
+        } else {
+            Trip::get_coll(&db).insert_many(trips_missing.values(), None).await?;
+        }
         // let _ = if CONFIGS.routing.deep_trip_check {
         //     info!("checking for differences in trips...");
         //     let mut c = 0;
