@@ -1,6 +1,6 @@
 #![feature(iter_intersperse)]
 
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{collections::{HashMap, HashSet}, io::Write, sync::Arc};
 use async_stream::try_stream;
 use bruss_config::CONFIGS;
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -9,7 +9,7 @@ use mongodb::bson::doc;
 use mongodb::options::FindOptions;
 use tokio::{sync::{Mutex, Semaphore}, task::JoinHandle};
 use tt::{AreaType, RequestOptions, TTArea, TTClient, TTResult, TTRoute, TTStop, TTTrip, TripQuery};
-use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Europe::Rome;
 use bruss_data::{sequence_hash, Area, BrussType, FromTT, Path, Route, Schedule, Segment, Stop, Trip};
 use log::{info,debug,warn};
@@ -370,17 +370,30 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     };
     info!("done, got {} from database/tt", routes.len());
 
+    #[derive(Deserialize)]
+    struct S {
+        id: String,
+        #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+        departure: DateTime<Utc>,
+    }
+
     info!("getting schedules from db...");
-    let sched: HashSet<Schedule> = Schedule::get_coll(&db)
+    let sched: HashSet<(String, chrono::DateTime<Utc>)> = db.collection::<S>("schedules")
         .find(doc!{}, None)
         .await?
+        .map(|r| r.map(|s| (s.id, s.departure)))
+        .map(|r| r.map(|s| {
+            print!("{:?} \r", s);
+            std::io::stdout().flush().unwrap();
+            s
+        }))
         .try_collect()
         .await?;
     info!("done! got {} schedules", sched.len());
 
     let mut paths_missing: HashMap<String, Path> = HashMap::new();
     let mut trips_missing: HashMap<String, Trip> = HashMap::new();
-    let mut sched_missing: HashSet<Schedule> = HashSet::new();
+    let mut sched_missing: HashMap<(String, DateTime<Utc>), Schedule> = HashMap::new();
 
     // // get a specific route to perform first pass
     // let r = routes.values().find(|r| r.code == "7").unwrap();
@@ -496,8 +509,9 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
                 let sch = Schedule::from_trip(&t, departure_utc);
                 debug!("got schedule: {:?}", sch);
-                if !sched.contains(&sch) && !sched_missing.contains(&sch) {
-                    sched_missing.insert(sch);
+                let k = (sch.id.clone(), sch.departure);
+                if !sched.contains(&k) && !sched_missing.contains_key(&k) {
+                    sched_missing.insert(k.clone(), sch);
                 }
                 // insert missing trip
                 if !trips.contains_key(&t.id) && !trips_missing.contains_key(&t.id) {
