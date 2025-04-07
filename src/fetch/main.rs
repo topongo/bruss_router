@@ -428,15 +428,17 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
 
     if CONFIGS.routing.get_trips {
         let mut tot_routes = 0;
+        let mut tot_trip_requests = 0;
         info!("getting trips from tt...");
         let tt_client = Arc::new(CONFIGS.tt.client());
         let dl = ParallelDownloader::new(Arc::clone(&tt_client));
-        for (n, r) in routes
+        'routes: for (n, r) in routes
             .values()
             // uncomment to get only a specific route
-            // .filter(|r| r.code == "7" && r.area == 23)
+            .filter(|r| CONFIGS.routing.filter_code.as_ref().is_none_or(|filter| filter.contains(&r.code)))
+            .filter(|r| CONFIGS.routing.filter_area.as_ref().is_none_or(|filter| filter.contains(&r.area)))
+            .filter(|r| CONFIGS.routing.filter_area_type.as_ref().is_none_or(|filter| filter.contains(&r.area_ty)))
             .enumerate()
-            // .filter(|(n, _)| *n < 200)
         {
             tot_routes += 1;
             let mut time = bounds.0.and_time(NaiveTime::from_hms_opt(4, 0, 0).unwrap());
@@ -444,8 +446,13 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             while time.date() <= bounds.1 {
                 info!("appending download of route {} ({:?}) [{:3}/{:3}] for {}...", r.id, r.area_ty, n, routes.len(), time.date());
 
-                dl.request(r.area_ty, r.id, time).await;
+                if tot_trip_requests >= CONFIGS.routing.max_trip_requests.unwrap_or(usize::MAX) {
+                    warn!("max trip requests reached, stopping");
+                    break 'routes;
+                }
 
+                dl.request(r.area_ty, r.id, time).await;
+                tot_trip_requests += 1;
                 time += Duration::days(1);
             } 
         }
