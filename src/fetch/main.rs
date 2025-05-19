@@ -1,5 +1,3 @@
-#![feature(iter_intersperse)]
-
 use std::{collections::{HashMap, HashSet}, io::Write, sync::Arc};
 use async_stream::try_stream;
 use bruss_config::CONFIGS;
