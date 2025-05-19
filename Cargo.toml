@@ -8,8 +8,8 @@ tt = { path = "../tt", features = ["stats"] }
 bruss_config = { path = "../config" }
 bruss_data = { path = "../data", features = ["db"] }
 lazy_static = "1.4"
-reqwest = { version = "0.11", features = ["json"] }
-tokio = { version = "1.35", features = ["full"] }
+reqwest = { workspace = true }
+tokio = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 # geojson = "0.24"
 serde = "^1"
