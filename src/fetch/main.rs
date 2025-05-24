@@ -239,7 +239,7 @@ mod migrations {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
-    env_logger::init(); 
+    env_logger::init();
 
     info!("getting tt client");
     let tt_client = Arc::new(CONFIGS.tt.client());
@@ -359,7 +359,7 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
         routes_bruss
     } else {
         info!("getting routes from db...");
-        routes_c 
+        routes_c
             .find(doc!{}, None)
             .await?
             .map(|r| r.map(|ro| (ro.id, ro)))
@@ -401,11 +401,11 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     // let mut hold = vec![];
     // loop {
     //     let ts = tt_client
-    //         .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery { 
+    //         .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery {
     //             ty: r.area_ty,
     //             route_id: r.id,
     //             limit: 1,
-    //             time 
+    //             time
     //         })))
     //         .await?;
     //     // 7 doens't pass on sundays and holidays, so if we get an empty schedule on a non-sunday,
@@ -429,9 +429,9 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     //     }
     //     time += TimeDelta::days(1);
     // }
-    // 
+    //
     // info!("collected {} holidays", holidays.len());
-    
+
     let bounds = (
         NaiveDate::from_ymd_opt(2024, 9, 9).unwrap(),
         NaiveDate::from_ymd_opt(2025, 6, 12).unwrap(),
@@ -651,7 +651,7 @@ mod tests {
 
         // collect trips from this week (assuming the current week of execution doens't include execptions)
         let c = CONFIGS.tt.client();
-        
+
         let start_week_now = today - TimeDelta::days(today.weekday().number_from_monday() as i64) - TimeDelta::days(14);
         let mut sample = HashMap::new();
 
@@ -659,7 +659,7 @@ mod tests {
 
 
         // println!("{:?}", c
-        //     .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery { 
+        //     .request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery {
         //         ty: r.area_ty,
         //         route_id: r.id,
         //         limit: 1 << 10,
@@ -677,7 +677,7 @@ mod tests {
 
         for w in 0..7 {
             let d = start_week_now + TimeDelta::days(w);
-            let trips = c.request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery { 
+            let trips = c.request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery {
                 ty: r.area_ty,
                 route_id: r.id,
                 limit: 1 << 10,
@@ -716,7 +716,7 @@ mod tests {
                     // println!("  using cache file: {}", cache.join(&code).to_str().unwrap());
                     serde_json::from_str(&std::fs::read_to_string(cache.join(code)).unwrap()).unwrap()
                 } else {
-                    let v = c.request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery { 
+                    let v = c.request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery {
                         ty: r.area_ty,
                         route_id: r.id,
                         limit: 1 << 10,
@@ -775,7 +775,7 @@ mod tests {
                     } else {
                         global_trips.insert(t.id.clone(), 1);
                     }
-                    
+
                     if let Some(c) = trips_in_weekdays.get_mut(&t.id) {
                         c.insert(w as u16);
                     } else {
@@ -900,7 +900,7 @@ mod tests {
         //     let c = CONFIGS.tt.client();
         //     let mut trips: Vec<Vec<(Trip, TimeDelta)>> = vec![];
         //     for d in &[d1, d2] {
-        //         trips.push(c.request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery { 
+        //         trips.push(c.request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery {
         //             ty: r.area_ty,
         //             route_id: r.id,
         //             limit: 1 << 10,
@@ -958,7 +958,7 @@ mod tests {
             let c = CONFIGS.tt.client();
             let mut trips: Vec<Vec<(Trip, TimeDelta)>> = vec![];
             for d in &[d1, d2] {
-                trips.push(c.request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery { 
+                trips.push(c.request_opt::<TTTrip, TripQuery>(Some(RequestOptions::new("/trips_new").query(TripQuery {
                     ty: r.area_ty,
                     route_id: r.id,
                     limit: 1 << 10,
