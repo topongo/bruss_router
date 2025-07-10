@@ -433,8 +433,8 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     // info!("collected {} holidays", holidays.len());
 
     let bounds = (
-        NaiveDate::from_ymd_opt(2024, 9, 9).unwrap(),
-        NaiveDate::from_ymd_opt(2025, 6, 12).unwrap(),
+        NaiveDate::from_ymd_opt(2025, 6, 13).unwrap(),
+        NaiveDate::from_ymd_opt(2025, 9, 9).unwrap(),
     );
 
     if CONFIGS.routing.get_trips {
