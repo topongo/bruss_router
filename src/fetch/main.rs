@@ -478,6 +478,9 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
             //     info!("telemetry for tt client: {}", tt_client.print_telemetry().await);
             //     panic!();
             // }
+            if ts.len() == 0 {
+                warn!("no trips found for this request, skipping");
+            }
             for t in ts {
                 if route_prev != t.route as i32 {
                     route_prev = t.route as i32;
