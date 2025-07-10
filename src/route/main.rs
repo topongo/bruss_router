@@ -113,3 +113,32 @@ async fn main() -> Result<(), Box<(dyn std::error::Error + 'static)>> {
     Ok(())
 }
 
+#[tokio::test]
+async fn measure_total_segment_length() {
+    let db = mongodb::Client::with_options(CONFIGS.db.gen_mongodb_options()).expect("error creating mongodb client").database(CONFIGS.db.get_db());
+    let segments: Vec<Segment> = Segment::get_coll(&db)
+        .find(doc!{}, None)
+        .await
+        .expect("error getting segments")
+        .map(|r| r.expect("error reading segment"))
+        .collect()
+        .await;
+
+    let mut lengths: HashMap<AreaType, f64> = HashMap::from([
+        (AreaType::E, 0.0),
+        (AreaType::U, 0.0),
+    ]);
+
+    for s in segments {
+        let length = s.geometry
+            .iter()
+            .zip(s.geometry.iter().skip(1))
+            .fold(0.0, |acc, (a, b)| {
+                acc + (a - b)
+            });
+        lengths.get_mut(&s.ty).map(|l| *l += length).expect("error updating length");
+    }
+
+    println!("segment lengths by area: {:#?}", lengths);
+    println!("total segment length: {} km", lengths.values().sum::<f64>() / 1000.0);
+}
